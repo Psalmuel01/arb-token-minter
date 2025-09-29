@@ -28,6 +28,8 @@ function useWallet() {
   const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null)
   const [signer, setSigner] = useState<ethers.Signer | null>(null)
   const [address, setAddress] = useState<string>("")
+  const [chainOk, setChainOk] = useState<boolean>(true)
+  const [chainError, setChainError] = useState<string>("")
 
   useEffect(() => {
     if (window.ethereum) {
@@ -36,15 +38,41 @@ function useWallet() {
     }
   }, [])
 
+  const checkOrSwitchChain = async () => {
+    if (!window.ethereum) return false
+    try {
+      const chainId = await window.ethereum.request({ method: "eth_chainId" })
+      if (chainId !== "0x66eee") {
+        // Try to switch
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x66eee" }],
+        })
+        setChainOk(true)
+        setChainError("")
+        return true
+      }
+      setChainOk(true)
+      setChainError("")
+      return true
+    } catch (err: any) {
+      setChainOk(false)
+      setChainError("Please switch to Arbitrum Sepolia (ChainID 421614) in your wallet.")
+      return false
+    }
+  }
+
   const connect = async () => {
     if (!provider) return
+    const ok = await checkOrSwitchChain()
+    if (!ok) return
     await provider.send("eth_requestAccounts", [])
     const signer = await provider.getSigner()
     setSigner(signer)
     setAddress(await signer.getAddress())
   }
 
-  return { provider, signer, address, connect }
+  return { provider, signer, address, connect, chainOk, chainError }
 }
 
 function useContract(abi: any, contractAddress: string, signer: ethers.Signer | null) {
@@ -169,8 +197,11 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
               Create non-transferable tokens that represent identity, achievements, or membership. Choose from three
               minting options below.
             </p>
+            {!wallet.chainOk && wallet.chainError && (
+              <div className="text-sm text-destructive mb-2">{wallet.chainError}</div>
+            )}
             {!wallet.address ? (
-              <Button onClick={wallet.connect} className="mt-2">
+              <Button onClick={wallet.connect} className="mt-2" disabled={!wallet.chainOk}>
                 <Wallet className="mr-2 h-4 w-4" />
                 Connect Wallet
               </Button>
