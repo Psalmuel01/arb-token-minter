@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { ethers } from "ethers"
 import { Navbar } from "./navbar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card"
 import { Button } from "./ui/button"
@@ -18,53 +19,109 @@ interface MintStatus {
   error?: string
 }
 
-export function SoulboundMinter() {
+interface SoulboundMinterProps {
+  abi: any
+  contractAddress: string
+}
+
+function useWallet() {
+  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null)
+  const [signer, setSigner] = useState<ethers.Signer | null>(null)
+  const [address, setAddress] = useState<string>("")
+
+  useEffect(() => {
+    if (window.ethereum) {
+      const browserProvider = new ethers.BrowserProvider(window.ethereum)
+      setProvider(browserProvider)
+    }
+  }, [])
+
+  const connect = async () => {
+    if (!provider) return
+    await provider.send("eth_requestAccounts", [])
+    const signer = await provider.getSigner()
+    setSigner(signer)
+    setAddress(await signer.getAddress())
+  }
+
+  return { provider, signer, address, connect }
+}
+
+function useContract(abi: any, contractAddress: string, signer: ethers.Signer | null) {
+  if (!abi || !contractAddress || !signer) return null
+  return new ethers.Contract(contractAddress, abi, signer)
+}
+
+export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) {
   const [singleAddress, setSingleAddress] = useState("")
   const [batchAddresses, setBatchAddresses] = useState("")
   const [mintStatus, setMintStatus] = useState<MintStatus>({ type: "self", status: "idle" })
 
-  // Mock contract interaction - replace with actual ethers.js or wagmi implementation
-  const mockMint = async (type: "self" | "single" | "batch", addresses?: string[]) => {
-    setMintStatus({ type, status: "pending" })
+  const wallet = useWallet()
+  const contract = useContract(abi, contractAddress, wallet.signer)
 
-    // Simulate transaction
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+  const resetStatus = () => setMintStatus({ type: mintStatus.type, status: "idle" })
 
-    // Mock success/error (90% success rate)
-    const success = Math.random() > 0.1
-
-    if (success) {
+  const handleSelfMint = async () => {
+    if (!contract || !wallet.address) return
+    setMintStatus({ type: "self", status: "pending" })
+    try {
+      const tx = await contract.mintToOne(wallet.address)
+      const receipt = await tx.wait()
       setMintStatus({
-        type,
+        type: "self",
         status: "success",
-        txHash: "0x" + Math.random().toString(16).substr(2, 64),
+        txHash: receipt.hash,
       })
-    } else {
+    } catch (err: any) {
       setMintStatus({
-        type,
+        type: "self",
         status: "error",
-        error: "Transaction failed. Please try again.",
+        error: err?.message || "Transaction failed. Please try again.",
       })
     }
   }
 
-  const handleSelfMint = () => {
-    mockMint("self")
+  const handleSingleMint = async () => {
+    if (!contract || !singleAddress.trim()) return
+    setMintStatus({ type: "single", status: "pending" })
+    try {
+      const tx = await contract.mintToOne(singleAddress.trim())
+      const receipt = await tx.wait()
+      setMintStatus({
+        type: "single",
+        status: "success",
+        txHash: receipt.hash,
+      })
+    } catch (err: any) {
+      setMintStatus({
+        type: "single",
+        status: "error",
+        error: err?.message || "Transaction failed. Please try again.",
+      })
+    }
   }
 
-  const handleSingleMint = () => {
-    if (!singleAddress.trim()) return
-    mockMint("single", [singleAddress])
-  }
-
-  const handleBatchMint = () => {
-    const addresses = batchAddresses
-      .split(/[,\n]/)
-      .map((addr) => addr.trim())
-      .filter((addr) => addr.length > 0)
-
+  const handleBatchMint = async () => {
+    if (!contract) return
+    const addresses = parseBatchAddresses()
     if (addresses.length === 0) return
-    mockMint("batch", addresses)
+    setMintStatus({ type: "batch", status: "pending" })
+    try {
+      const tx = await contract.mintToMany(addresses)
+      const receipt = await tx.wait()
+      setMintStatus({
+        type: "batch",
+        status: "success",
+        txHash: receipt.hash,
+      })
+    } catch (err: any) {
+      setMintStatus({
+        type: "batch",
+        status: "error",
+        error: err?.message || "Transaction failed. Please try again.",
+      })
+    }
   }
 
   const parseBatchAddresses = () => {
@@ -112,6 +169,16 @@ export function SoulboundMinter() {
               Create non-transferable tokens that represent identity, achievements, or membership. Choose from three
               minting options below.
             </p>
+            {!wallet.address ? (
+              <Button onClick={wallet.connect} className="mt-2">
+                <Wallet className="mr-2 h-4 w-4" />
+                Connect Wallet
+              </Button>
+            ) : (
+              <div className="text-xs font-mono text-muted-foreground">
+                Connected: {wallet.address}
+              </div>
+            )}
           </div>
 
           <div className="space-y-6">
@@ -127,7 +194,7 @@ export function SoulboundMinter() {
               <CardContent className="space-y-5">
                 <Button
                   onClick={handleSelfMint}
-                  disabled={mintStatus.status === "pending"}
+                  disabled={mintStatus.status === "pending" || !wallet.address}
                   className="w-full bg-primary hover:bg-primary/90"
                 >
                   {mintStatus.type === "self" && mintStatus.status === "pending" ? (
@@ -177,7 +244,7 @@ export function SoulboundMinter() {
                 />
                 <Button
                   onClick={handleSingleMint}
-                  disabled={!singleAddress.trim() || mintStatus.status === "pending"}
+                  disabled={!singleAddress.trim() || mintStatus.status === "pending" || !wallet.address}
                   className="w-full bg-primary hover:bg-primary/90"
                 >
                   {mintStatus.type === "single" && mintStatus.status === "pending" ? (
@@ -238,7 +305,7 @@ export function SoulboundMinter() {
 
                 <Button
                   onClick={handleBatchMint}
-                  disabled={parseBatchAddresses().length === 0 || mintStatus.status === "pending"}
+                  disabled={parseBatchAddresses().length === 0 || mintStatus.status === "pending" || !wallet.address}
                   className="w-full bg-primary hover:bg-primary/90"
                 >
                   {mintStatus.type === "batch" && mintStatus.status === "pending" ? (
