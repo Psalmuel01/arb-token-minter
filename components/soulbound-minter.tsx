@@ -1,7 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { ethers } from "ethers"
+import { useState } from "react"
 import { Navbar } from "./navbar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card"
 import { Button } from "./ui/button"
@@ -9,6 +8,9 @@ import { Input } from "./ui/input"
 import { Textarea } from "./ui/textarea"
 import { Badge } from "./ui/badge"
 import { Wallet, Users, Send, Loader2, CheckCircle, XCircle } from "lucide-react"
+import { useAccount, useDisconnect, useSwitchChain, usePublicClient, useWalletClient, useWriteContract } from "wagmi"
+// import { writeContract } from "@wagmi/core"
+import { Hex } from "viem"
 
 type TransactionStatus = "idle" | "pending" | "success" | "error"
 
@@ -24,130 +26,158 @@ interface SoulboundMinterProps {
   contractAddress: string
 }
 
-function useWallet() {
-  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null)
-  const [signer, setSigner] = useState<ethers.Signer | null>(null)
-  const [address, setAddress] = useState<string>("")
-  const [chainOk, setChainOk] = useState<boolean>(true)
-  const [chainError, setChainError] = useState<string>("")
+const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 
-  useEffect(() => {
-    if (window.ethereum) {
-      const browserProvider = new ethers.BrowserProvider(window.ethereum)
-      setProvider(browserProvider)
-    }
-  }, [])
-
-  const checkOrSwitchChain = async () => {
-    if (!window.ethereum) return false
-    try {
-      const chainId = await window.ethereum.request({ method: "eth_chainId" })
-      if (chainId !== "0x66eee") {
-        // Try to switch
-        await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x66eee" }],
-        })
-        setChainOk(true)
-        setChainError("")
-        return true
-      }
-      setChainOk(true)
-      setChainError("")
-      return true
-    } catch (err: any) {
-      setChainOk(false)
-      setChainError("Please switch to Arbitrum Sepolia (ChainID 421614) in your wallet.")
-      return false
-    }
-  }
-
-  const connect = async () => {
-    if (!provider) return
-    const ok = await checkOrSwitchChain()
-    if (!ok) return
-    await provider.send("eth_requestAccounts", [])
-    const signer = await provider.getSigner()
-    setSigner(signer)
-    setAddress(await signer.getAddress())
-  }
-
-  return { provider, signer, address, connect, chainOk, chainError }
-}
-
-function useContract(abi: any, contractAddress: string, signer: ethers.Signer | null) {
-  if (!abi || !contractAddress || !signer) return null
-  return new ethers.Contract(contractAddress, abi, signer)
-}
+const isHexAddress = (addr: string) =>
+  /^0x[a-fA-F0-9]{40}$/.test(addr.trim())
 
 export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) {
   const [singleAddress, setSingleAddress] = useState("")
   const [batchAddresses, setBatchAddresses] = useState("")
   const [mintStatus, setMintStatus] = useState<MintStatus>({ type: "self", status: "idle" })
 
-  const wallet = useWallet()
-  const contract = useContract(abi, contractAddress, wallet.signer)
+  const { address, isConnected } = useAccount()
+  const { disconnect } = useDisconnect()
+  const { chains } = useSwitchChain()
+  const { switchChain } = useSwitchChain()
+  const publicClient = usePublicClient()
+  const walletClient = useWalletClient()
+  const { writeContract } = useWriteContract()
 
   const resetStatus = () => setMintStatus({ type: mintStatus.type, status: "idle" })
 
+  const wrongChain = chains?.[0]?.id !== ARBITRUM_SEPOLIA_CHAIN_ID
+
+  const decodeRevertReason = (err: any) => {
+    if (err?.shortMessage) return err.shortMessage
+    if (err?.message?.includes("execution reverted")) {
+      return "Execution reverted (contract error). This may be due to:\n- You are not the issuer or lack permission\n- The address already owns a token\n- Invalid address or contract state\nCheck contract rules and try again."
+    }
+    return err?.message || "Transaction failed. Please try again."
+  }
+
+  const handleSwitchChain = async () => {
+    try {
+      await switchChain({ chainId: ARBITRUM_SEPOLIA_CHAIN_ID })
+    } catch (err) {
+      setMintStatus({
+        type: mintStatus.type,
+        status: "error",
+        error: "Please switch to Arbitrum Sepolia (ChainID 421614) in your wallet.",
+      })
+    }
+  }
+
   const handleSelfMint = async () => {
-    if (!contract || !wallet.address) return
+    if (!isConnected || !address || wrongChain) return
+    if (address === "0x0000000000000000000000000000000000000000") {
+      setMintStatus({
+        type: "self",
+        status: "error",
+        error: "Cannot mint to zero address.",
+      })
+      return
+    }
     setMintStatus({ type: "self", status: "pending" })
     try {
-      const tx = await contract.mintToOne(wallet.address)
-      const receipt = await tx.wait()
+      const { hash } = await writeContract({
+        address: contractAddress as Hex,
+        abi,
+        functionName: "mintToOne",
+        args: [address],
+      })
       setMintStatus({
         type: "self",
         status: "success",
-        txHash: receipt.hash,
+        txHash: hash,
       })
     } catch (err: any) {
       setMintStatus({
         type: "self",
         status: "error",
-        error: err?.message || "Transaction failed. Please try again.",
+        error: decodeRevertReason(err),
       })
     }
   }
 
   const handleSingleMint = async () => {
-    if (!contract || !singleAddress.trim()) return
+    if (!isConnected || !singleAddress.trim() || wrongChain) return
+    if (!isHexAddress(singleAddress.trim())) {
+      setMintStatus({
+        type: "single",
+        status: "error",
+        error: "Only hex addresses are supported on Arbitrum Sepolia. ENS names are not supported.",
+      })
+      return
+    }
+    if (singleAddress.trim().toLowerCase() === "0x0000000000000000000000000000000000000000") {
+      setMintStatus({
+        type: "single",
+        status: "error",
+        error: "Cannot mint to zero address.",
+      })
+      return
+    }
     setMintStatus({ type: "single", status: "pending" })
     try {
-      const tx = await contract.mintToOne(singleAddress.trim())
-      const receipt = await tx.wait()
+      const { hash } = await writeContract({
+        address: contractAddress as Hex,
+        abi,
+        functionName: "mintToOne",
+        args: [singleAddress.trim()],
+      })
       setMintStatus({
         type: "single",
         status: "success",
-        txHash: receipt.hash,
+        txHash: hash,
       })
     } catch (err: any) {
       setMintStatus({
         type: "single",
         status: "error",
-        error: err?.message || "Transaction failed. Please try again.",
+        error: decodeRevertReason(err),
       })
     }
   }
 
   const handleBatchMint = async () => {
-    if (!contract) return
+    if (!isConnected || wrongChain) return
     const addresses = parseBatchAddresses()
     if (addresses.length === 0) return
+    if (addresses.some(addr => !isHexAddress(addr))) {
+      setMintStatus({
+        type: "batch",
+        status: "error",
+        error: "Only hex addresses are supported in batch mint. ENS names are not supported.",
+      })
+      return
+    }
+    if (addresses.some(addr => addr.toLowerCase() === "0x0000000000000000000000000000000000000000")) {
+      setMintStatus({
+        type: "batch",
+        status: "error",
+        error: "Cannot mint to zero address in batch.",
+      })
+      return
+    }
     setMintStatus({ type: "batch", status: "pending" })
     try {
-      const tx = await contract.mintToMany(addresses)
-      const receipt = await tx.wait()
+      const { hash } = await writeContract({
+        address: contractAddress as Hex,
+        abi,
+        functionName: "mintToMany",
+        args: [addresses],
+      })
       setMintStatus({
         type: "batch",
         status: "success",
-        txHash: receipt.hash,
+        txHash: hash,
       })
     } catch (err: any) {
       setMintStatus({
         type: "batch",
         status: "error",
-        error: err?.message || "Transaction failed. Please try again.",
+        error: decodeRevertReason(err),
       })
     }
   }
@@ -197,17 +227,27 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
               Create non-transferable tokens that represent identity, achievements, or membership. Choose from three
               minting options below.
             </p>
-            {!wallet.chainOk && wallet.chainError && (
-              <div className="text-sm text-destructive mb-2">{wallet.chainError}</div>
+            {wrongChain && (
+              <div className="text-sm text-destructive mb-2">
+                You are on the wrong network.{" "}
+                <Button variant="outline" size="sm" onClick={handleSwitchChain}>
+                  Switch to Arbitrum Sepolia
+                </Button>
+              </div>
             )}
-            {!wallet.address ? (
-              <Button onClick={wallet.connect} className="mt-2" disabled={!wallet.chainOk}>
+            {!isConnected ? (
+              <Button onClick={() => window.ethereum?.request({ method: "eth_requestAccounts" })} className="mt-2" disabled={wrongChain}>
                 <Wallet className="mr-2 h-4 w-4" />
                 Connect Wallet
               </Button>
             ) : (
-              <div className="text-xs font-mono text-muted-foreground">
-                Connected: {wallet.address}
+              <div className="flex flex-col items-center gap-2">
+                <div className="text-xs font-mono text-muted-foreground">
+                  Connected: {address}
+                </div>
+                <Button variant="outline" size="sm" onClick={() => disconnect()}>
+                  Disconnect
+                </Button>
               </div>
             )}
           </div>
@@ -225,7 +265,7 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
               <CardContent className="space-y-5">
                 <Button
                   onClick={handleSelfMint}
-                  disabled={mintStatus.status === "pending" || !wallet.address}
+                  disabled={mintStatus.status === "pending" || !isConnected || wrongChain}
                   className="w-full bg-primary hover:bg-primary/90"
                 >
                   {mintStatus.type === "self" && mintStatus.status === "pending" ? (
@@ -245,7 +285,7 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
                   <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
                     <div className="flex items-center gap-2">
                       {getStatusIcon(mintStatus.status)}
-                      <span className="text-sm">
+                      <span className="text-sm whitespace-pre-line">
                         {mintStatus.status === "pending" && "Transaction pending..."}
                         {mintStatus.status === "success" && "Token minted successfully!"}
                         {mintStatus.status === "error" && mintStatus.error}
@@ -275,7 +315,7 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
                 />
                 <Button
                   onClick={handleSingleMint}
-                  disabled={!singleAddress.trim() || mintStatus.status === "pending" || !wallet.address}
+                  disabled={!singleAddress.trim() || mintStatus.status === "pending" || !isConnected || wrongChain}
                   className="w-full bg-primary hover:bg-primary/90"
                 >
                   {mintStatus.type === "single" && mintStatus.status === "pending" ? (
@@ -295,7 +335,7 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
                   <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
                     <div className="flex items-center gap-2">
                       {getStatusIcon(mintStatus.status)}
-                      <span className="text-sm">
+                      <span className="text-sm whitespace-pre-line">
                         {mintStatus.status === "pending" && "Transaction pending..."}
                         {mintStatus.status === "success" && "Token minted successfully!"}
                         {mintStatus.status === "error" && mintStatus.error}
@@ -336,7 +376,7 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
 
                 <Button
                   onClick={handleBatchMint}
-                  disabled={parseBatchAddresses().length === 0 || mintStatus.status === "pending" || !wallet.address}
+                  disabled={parseBatchAddresses().length === 0 || mintStatus.status === "pending" || !isConnected || wrongChain}
                   className="w-full bg-primary hover:bg-primary/90"
                 >
                   {mintStatus.type === "batch" && mintStatus.status === "pending" ? (
@@ -356,7 +396,7 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
                   <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
                     <div className="flex items-center gap-2">
                       {getStatusIcon(mintStatus.status)}
-                      <span className="text-sm">
+                      <span className="text-sm whitespace-pre-line">
                         {mintStatus.status === "pending" && "Batch transaction pending..."}
                         {mintStatus.status === "success" &&
                           `${parseBatchAddresses().length} tokens minted successfully!`}
