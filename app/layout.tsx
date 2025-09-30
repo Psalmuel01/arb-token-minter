@@ -17,7 +17,7 @@ const metadata: Metadata = {
   generator: "v0.app",
 }
 
-const config = createConfig({
+const wagmiConfig = createConfig({
   chains: [arbitrumSepolia],
   transports: {
     [arbitrumSepolia.id]: http(),
@@ -35,7 +35,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
-        <WagmiProvider config={config}>
+        <WagmiProvider config={wagmiConfig}>
           <QueryClientProvider client={queryClient}>
             <Suspense fallback={null}>{children}</Suspense>
           </QueryClientProvider>

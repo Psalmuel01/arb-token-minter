@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Navbar } from "./navbar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card"
 import { Button } from "./ui/button"
@@ -8,8 +8,7 @@ import { Input } from "./ui/input"
 import { Textarea } from "./ui/textarea"
 import { Badge } from "./ui/badge"
 import { Wallet, Users, Send, Loader2, CheckCircle, XCircle } from "lucide-react"
-import { useAccount, useDisconnect, useSwitchChain, usePublicClient, useWalletClient, useWriteContract } from "wagmi"
-// import { writeContract } from "@wagmi/core"
+import { useAccount, useDisconnect, useSwitchChain, usePublicClient, useWalletClient, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
 import { Hex } from "viem"
 
 type TransactionStatus = "idle" | "pending" | "success" | "error"
@@ -42,7 +41,44 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
   const { switchChain } = useSwitchChain()
   const publicClient = usePublicClient()
   const walletClient = useWalletClient()
-  const { writeContract } = useWriteContract()
+  const { writeContract, data: hash, isPending, error: writeError } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed, error: txError } = useWaitForTransactionReceipt({ hash });
+
+  // Update mintStatus based on transaction state
+  // This effect runs when hash, isPending, isConfirming, isConfirmed, or errors change
+  useEffect(() => {
+    if (isPending || isConfirming) {
+      setMintStatus((prev) => ({
+        ...prev,
+        status: "pending",
+        txHash: hash,
+        error: undefined,
+      }))
+    } else if (isConfirmed) {
+      setMintStatus((prev) => ({
+        ...prev,
+        status: "success",
+        txHash: hash,
+        error: undefined,
+      }))
+    } else if (writeError || txError) {
+      setMintStatus((prev) => ({
+        ...prev,
+        status: "error",
+        txHash: hash,
+        error: decodeRevertReason(writeError || txError),
+      }))
+    }
+    // If idle and no hash, reset status
+    if (!isPending && !isConfirming && !isConfirmed && !writeError && !txError && !hash) {
+      setMintStatus((prev) => ({
+        ...prev,
+        status: "idle",
+        txHash: undefined,
+        error: undefined,
+      }))
+    }
+  }, [isPending, isConfirming, isConfirmed, writeError, txError, hash])
 
   const resetStatus = () => setMintStatus({ type: mintStatus.type, status: "idle" })
 
@@ -80,17 +116,13 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
     }
     setMintStatus({ type: "self", status: "pending" })
     try {
-      const { hash } = await writeContract({
+      await writeContract({
         address: contractAddress as Hex,
         abi,
         functionName: "mintToOne",
         args: [address],
       })
-      setMintStatus({
-        type: "self",
-        status: "success",
-        txHash: hash,
-      })
+      // Status will be updated by useEffect above
     } catch (err: any) {
       setMintStatus({
         type: "self",
@@ -120,17 +152,13 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
     }
     setMintStatus({ type: "single", status: "pending" })
     try {
-      const { hash } = await writeContract({
+      await writeContract({
         address: contractAddress as Hex,
         abi,
         functionName: "mintToOne",
         args: [singleAddress.trim()],
       })
-      setMintStatus({
-        type: "single",
-        status: "success",
-        txHash: hash,
-      })
+      // Status will be updated by useEffect above
     } catch (err: any) {
       setMintStatus({
         type: "single",
@@ -162,17 +190,13 @@ export function SoulboundMinter({ abi, contractAddress }: SoulboundMinterProps) 
     }
     setMintStatus({ type: "batch", status: "pending" })
     try {
-      const { hash } = await writeContract({
+      await writeContract({
         address: contractAddress as Hex,
         abi,
         functionName: "mintToMany",
         args: [addresses],
       })
-      setMintStatus({
-        type: "batch",
-        status: "success",
-        txHash: hash,
-      })
+      // Status will be updated by useEffect above
     } catch (err: any) {
       setMintStatus({
         type: "batch",
