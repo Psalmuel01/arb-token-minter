@@ -1,30 +1,61 @@
-# Soulbound Token minter
+# Minting UI with Wagmi + Next.js
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+This project is a simple UI for minting tokens using [wagmi](https://wagmi.sh/) in a **Next.js App Router** environment.  
+It supports minting to:
+- Yourself
+- A single address
+- Multiple addresses (via list)
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/psalmuel01s-projects/v0-soulbound-token-minter)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/n7nMpHKykmW)
+## Tech Stack
+- [Next.js 14+](https://nextjs.org/) (App Router)
+- [wagmi](https://wagmi.sh/) (React Hooks for Ethereum)
+- [Viem](https://viem.sh/) (Ethereum TypeScript library)
+- [Arbitrum Sepolia Testnet](https://docs.arbitrum.io/)
 
-## Overview
+---
 
-This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
+## Getting Started
 
-## Deployment
+### 1. Clone the Repo
+```bash
+git clone https://github.com/your-username/minting-ui.git
+cd minting-ui
+```
 
-Your project is live at:
+### 2. Install Dependencies
 
-**[https://vercel.com/psalmuel01s-projects/v0-soulbound-token-minter](https://vercel.com/psalmuel01s-projects/v0-soulbound-token-minter)**
+```bash
+pnpm install
+# or
+npm install
+# or
+yarn install
+```
 
-## Build your app
+### 3. Running the App
 
-Continue building your app on:
+```bash
+pnpm dev
+# or
+npm run dev
+# or
+yarn dev
+```
 
-**[https://v0.app/chat/projects/n7nMpHKykmW](https://v0.app/chat/projects/n7nMpHKykmW)**
+App will be available at [http://localhost:3000](http://localhost:3000).
 
-## How It Works
+---
 
-1. Create and modify your project using [v0.app](https://v0.app)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+## Features
+
+* ✅ Mint to your connected wallet
+* ✅ Mint to a single custom address
+* ✅ Mint to multiple addresses by passing a list
+* ✅ Runs on **Arbitrum Sepolia** by default
+* ✅ Safe wagmi config for Next.js App Router
+
+---
+
+## License
+
+MIT
